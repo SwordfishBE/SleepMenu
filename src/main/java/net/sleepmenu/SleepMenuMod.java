@@ -8,18 +8,19 @@ import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.block.BlockState;
-import net.minecraft.registry.tag.BlockTags;
+import net.minecraft.ChatFormatting;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.Commands;
+import net.minecraft.network.chat.ClickEvent;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.HoverEvent;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.PlayerConfigEntry;
-import net.minecraft.server.command.ServerCommandSource;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.text.ClickEvent;
-import net.minecraft.text.HoverEvent;
-import net.minecraft.text.MutableText;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.permissions.PermissionSet;
+import net.minecraft.server.permissions.Permissions;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.world.level.block.state.BlockState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,9 +37,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-
-import static net.minecraft.server.command.CommandManager.argument;
-import static net.minecraft.server.command.CommandManager.literal;
 
 public class SleepMenuMod implements ModInitializer {
     public static final String MOD_ID = "sleepmenu";
@@ -84,24 +82,24 @@ public class SleepMenuMod implements ModInitializer {
 
     private void registerCommands() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> dispatcher.register(
-            literal("sleepmenu")
-                .then(literal("reload").executes(context -> {
-                    ServerCommandSource source = context.getSource();
+            Commands.literal("sleepmenu")
+                .then(Commands.literal("reload").executes(context -> {
+                    CommandSourceStack source = context.getSource();
                     if (!isAdminSource(source)) {
-                        source.sendError(Text.literal("You do not have permission to reload Sleep Menu."));
+                        source.sendFailure(Component.literal("You do not have permission to reload Sleep Menu."));
                         return 0;
                     }
 
                     reloadConfig();
-                    source.sendFeedback(() -> Text.literal("[SleepMenu] Config reloaded."), false);
+                    source.sendSuccess(() -> Component.literal("[SleepMenu] Config reloaded."), false);
                     return 1;
                 }))
-                .then(literal("open").executes(context -> {
-                    ServerPlayerEntity player = context.getSource().getPlayerOrThrow();
+                .then(Commands.literal("open").executes(context -> {
+                    ServerPlayer player = context.getSource().getPlayerOrException();
                     return openMenuForPlayer(player, true) ? 1 : 0;
                 }))
-                .then(literal("set")
-                    .then(argument("option", StringArgumentType.word())
+                .then(Commands.literal("set")
+                    .then(Commands.argument("option", StringArgumentType.word())
                         .suggests((context, builder) -> {
                             for (MenuAction action : MENU_ACTIONS) {
                                 builder.suggest(action.id);
@@ -112,25 +110,25 @@ public class SleepMenuMod implements ModInitializer {
         ));
     }
 
-    private int executeSetCommand(ServerCommandSource source, String rawOption) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
-        ServerPlayerEntity player = source.getPlayerOrThrow();
+    private int executeSetCommand(CommandSourceStack source, String rawOption) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
+        ServerPlayer player = source.getPlayerOrException();
 
         MenuAction action = ACTIONS_BY_ID.get(rawOption.toLowerCase(Locale.ROOT));
         if (action == null) {
-            source.sendError(Text.literal("Unknown sleep menu option."));
+            source.sendFailure(Component.literal("Unknown sleep menu option."));
             return 0;
         }
 
         return executeAction(source, player, action, true) ? 1 : 0;
     }
 
-    private boolean isAdminSource(ServerCommandSource source) {
-        ServerPlayerEntity player = source.getPlayer();
+    private boolean isAdminSource(CommandSourceStack source) {
+        ServerPlayer player = source.getPlayer();
         if (player == null) {
             return true;
         }
 
-        return source.getServer().getPlayerManager().isOperator(new PlayerConfigEntry(player.getGameProfile()));
+        return player.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER);
     }
 
     private void reloadConfig() {
@@ -142,8 +140,8 @@ public class SleepMenuMod implements ModInitializer {
     private void onServerTick(MinecraftServer server) {
         Set<UUID> online = new HashSet<>();
 
-        for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
-            UUID uuid = player.getUuid();
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            UUID uuid = player.getUUID();
             online.add(uuid);
 
             PlayerMenuState state = states.computeIfAbsent(uuid, ignored -> new PlayerMenuState());
@@ -156,7 +154,7 @@ public class SleepMenuMod implements ModInitializer {
             } else if (!onBed && state.onBed) {
                 state.onBed = false;
                 state.hintTicker = 0;
-                player.sendMessage(Text.empty(), true);
+                player.sendOverlayMessage(Component.empty());
             }
 
             if (!onBed) {
@@ -165,14 +163,14 @@ public class SleepMenuMod implements ModInitializer {
 
             if (!permissionService.hasPermission(player, PERM_USE)) {
                 if (state.hintTicker % 40 == 0) {
-                    player.sendMessage(Text.literal("You do not have permission to use Sleep Menu."), true);
+                    player.sendOverlayMessage(Component.literal("You do not have permission to use Sleep Menu."));
                 }
                 state.hintTicker++;
                 continue;
             }
 
             if (state.hintTicker % 40 == 0) {
-                player.sendMessage(Text.literal("Sleep Menu: click chat buttons, or use /sleepmenu open"), true);
+                player.sendOverlayMessage(Component.literal("Sleep Menu: click chat buttons, or use /sleepmenu open"));
             }
             state.hintTicker++;
         }
@@ -181,27 +179,27 @@ public class SleepMenuMod implements ModInitializer {
         lastActionTickByPlayer.keySet().retainAll(online);
     }
 
-    private boolean openMenuForPlayer(ServerPlayerEntity player, boolean fromCommand) {
+    private boolean openMenuForPlayer(ServerPlayer player, boolean fromCommand) {
         if (!isStandingOnBed(player)) {
             if (fromCommand) {
-                player.sendMessage(Text.literal("Stand on a bed to use Sleep Menu."), false);
+                player.sendSystemMessage(Component.literal("Stand on a bed to use Sleep Menu."));
             }
             return false;
         }
 
         if (!permissionService.hasPermission(player, PERM_USE)) {
-            player.sendMessage(Text.literal("You do not have permission to use Sleep Menu."), false);
+            player.sendSystemMessage(Component.literal("You do not have permission to use Sleep Menu."));
             return false;
         }
 
-        player.sendMessage(Text.literal("[Sleep Menu] Choose an option:").formatted(Formatting.LIGHT_PURPLE), false);
-        player.sendMessage(buildClickableRow("Time", List.of("day", "midnight", "night", "noon")), false);
-        player.sendMessage(buildClickableRow("Weather", List.of("clear", "rain", "thunder")), false);
+        player.sendSystemMessage(Component.literal("[SleepMenu] Choose an option:").withStyle(ChatFormatting.LIGHT_PURPLE));
+        player.sendSystemMessage(buildClickableRow("Time", List.of("day", "midnight", "night", "noon")));
+        player.sendSystemMessage(buildClickableRow("Weather", List.of("clear", "rain", "thunder")));
         return true;
     }
 
-    private MutableText buildClickableRow(String title, List<String> ids) {
-        MutableText row = Text.literal(title + ": ").formatted(Formatting.GOLD);
+    private MutableComponent buildClickableRow(String title, List<String> ids) {
+        MutableComponent row = Component.literal(title + ": ").withStyle(ChatFormatting.GOLD);
 
         for (int i = 0; i < ids.size(); i++) {
             MenuAction action = ACTIONS_BY_ID.get(ids.get(i));
@@ -209,43 +207,43 @@ public class SleepMenuMod implements ModInitializer {
                 continue;
             }
 
-            row.append(Text.literal("[" + action.label + "]")
-                .styled(style -> style
-                    .withColor(Formatting.AQUA)
+            row.append(Component.literal("[" + action.label + "]")
+                .withStyle(style -> style
+                    .withColor(ChatFormatting.AQUA)
                     .withClickEvent(new ClickEvent.RunCommand("/sleepmenu set " + action.id))
-                    .withHoverEvent(new HoverEvent.ShowText(Text.literal("Click to apply: " + action.label)))));
+                    .withHoverEvent(new HoverEvent.ShowText(Component.literal("Click to apply: " + action.label)))));
 
             if (i < ids.size() - 1) {
-                row.append(Text.literal(" ").formatted(Formatting.GRAY));
+                row.append(Component.literal(" ").withStyle(ChatFormatting.GRAY));
             }
         }
 
         return row;
     }
 
-    private boolean executeAction(ServerCommandSource source, ServerPlayerEntity player, MenuAction action, boolean fromDirectSet) {
+    private boolean executeAction(CommandSourceStack source, ServerPlayer player, MenuAction action, boolean fromDirectSet) {
         MinecraftServer server = source.getServer();
         if (!isStandingOnBed(player)) {
-            player.sendMessage(Text.literal("Stand on a bed to use Sleep Menu."), true);
+            player.sendOverlayMessage(Component.literal("Stand on a bed to use Sleep Menu."));
             return false;
         }
 
         if (!permissionService.hasPermission(player, PERM_USE)) {
-            player.sendMessage(Text.literal("You do not have permission to use Sleep Menu."), true);
+            player.sendOverlayMessage(Component.literal("You do not have permission to use Sleep Menu."));
             return false;
         }
 
         if (!permissionService.hasPermission(player, action.permissionNode)) {
-            player.sendMessage(Text.literal("You do not have permission for this option."), true);
+            player.sendOverlayMessage(Component.literal("You do not have permission for this option."));
             return false;
         }
 
         long nowTick = getCurrentServerTick(server);
-        long lastTick = lastActionTickByPlayer.getOrDefault(player.getUuid(), Long.MIN_VALUE / 2);
+        long lastTick = lastActionTickByPlayer.getOrDefault(player.getUUID(), Long.MIN_VALUE / 2);
         long elapsed = nowTick - lastTick;
         if (elapsed < config.cooldownTicks) {
             long remaining = config.cooldownTicks - elapsed;
-            player.sendMessage(Text.literal("Sleep Menu cooldown: " + remaining + " ticks left."), true);
+            player.sendOverlayMessage(Component.literal("Sleep Menu cooldown: " + remaining + " ticks left."));
             return false;
         }
 
@@ -255,72 +253,62 @@ public class SleepMenuMod implements ModInitializer {
         };
 
         if (!applied) {
-            player.sendMessage(Text.literal("Could not apply Sleep Menu action right now."), true);
+            player.sendOverlayMessage(Component.literal("Could not apply Sleep Menu action right now."));
             return false;
         }
 
-        lastActionTickByPlayer.put(player.getUuid(), nowTick);
+        lastActionTickByPlayer.put(player.getUUID(), nowTick);
         broadcastAction(server, player, action.broadcastMessage);
 
         if (fromDirectSet) {
-            player.sendMessage(Text.literal("Applied: " + action.label), true);
+            player.sendOverlayMessage(Component.literal("Applied: " + action.label));
         }
 
         return true;
     }
 
     private boolean setTime(MinecraftServer server, long targetTime) {
-        ServerWorld overworld = server.getOverworld();
-        if (overworld == null) {
-            return false;
-        }
-
-        long dayTime = Math.floorMod(overworld.getTimeOfDay(), 24000L);
-        long delta = targetTime - dayTime;
-        if (delta <= 0) {
-            delta += 24000L;
-        }
-
-        overworld.setTimeOfDay(overworld.getTimeOfDay() + delta);
+        server.getCommands().performPrefixedCommand(
+            server.createCommandSourceStack().withPermission(PermissionSet.ALL_PERMISSIONS),
+            "time set " + targetTime
+        );
         return true;
     }
 
     private boolean setWeather(MinecraftServer server, boolean raining, boolean thundering) {
-        ServerWorld overworld = server.getOverworld();
-        if (overworld == null) {
-            return false;
-        }
-
+        String weatherCommand;
         if (!raining && !thundering) {
-            overworld.setWeather(12000, 0, false, false);
+            weatherCommand = "weather clear";
+        } else if (thundering) {
+            weatherCommand = "weather thunder";
         } else {
-            overworld.setWeather(0, 12000, true, thundering);
+            weatherCommand = "weather rain";
         }
 
+        server.getCommands().performPrefixedCommand(
+            server.createCommandSourceStack().withPermission(PermissionSet.ALL_PERMISSIONS),
+            weatherCommand
+        );
         return true;
     }
 
     private long getCurrentServerTick(MinecraftServer server) {
-        ServerWorld overworld = server.getOverworld();
-        if (overworld != null) {
-            return overworld.getTime();
-        }
-        return System.currentTimeMillis() / 50L;
+        return server.getTickCount();
     }
 
-    private void broadcastAction(MinecraftServer server, ServerPlayerEntity actor, String action) {
-        Text message = Text.literal(actor.getName().getString() + ": " + action);
-        server.getPlayerManager().broadcast(message, false);
+    private void broadcastAction(MinecraftServer server, ServerPlayer actor, String action) {
+        Component message = Component.literal(actor.getName().getString() + ": " + action);
+        server.getPlayerList().broadcastSystemMessage(message, false);
     }
 
-    private boolean isStandingOnBed(ServerPlayerEntity player) {
-        BlockState feet = player.getEntityWorld().getBlockState(player.getBlockPos());
-        if (feet.isIn(BlockTags.BEDS)) {
+    private boolean isStandingOnBed(ServerPlayer player) {
+        BlockState feet = player.level().getBlockState(player.blockPosition());
+        if (feet.is(BlockTags.BEDS)) {
             return true;
         }
 
-        BlockState below = player.getEntityWorld().getBlockState(player.getBlockPos().down());
-        return below.isIn(BlockTags.BEDS);
+        BlockState below = player.level().getBlockState(player.blockPosition().below());
+        return below.is(BlockTags.BEDS);
     }
 
     private static Map<String, MenuAction> buildActionIndex() {
@@ -390,19 +378,15 @@ public class SleepMenuMod implements ModInitializer {
             }
         }
 
-        private boolean hasPermission(ServerPlayerEntity player, String node) {
+        private boolean hasPermission(ServerPlayer player, String node) {
             if (luckPermsBridge == null) {
                 return switch (config.noLuckPermsAccessMode) {
-                    case OP_ONLY -> isOperator(player);
+                    case OP_ONLY -> player.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER);
                     case EVERYONE -> true;
                 };
             }
 
-            return luckPermsBridge.hasPermission(player.getUuid(), node);
-        }
-
-        private boolean isOperator(ServerPlayerEntity player) {
-            return player.getCommandSource().getServer().getPlayerManager().isOperator(new PlayerConfigEntry(player.getGameProfile()));
+            return luckPermsBridge.hasPermission(player.getUUID(), node);
         }
     }
 
