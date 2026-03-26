@@ -73,7 +73,7 @@ Config file: `config/sleepmenu.json`
 }
 ```
 
-- `cooldownTicks`: minimum ticks between successful changes per player.
+- `cooldownTicks`: minimum ticks between successful changes per player (20 ticks = 1 second).
 - `noLuckPermsAccess`: `EVERYONE` or `OP_ONLY`.
 
 ---
