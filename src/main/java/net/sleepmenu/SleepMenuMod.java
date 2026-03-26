@@ -269,7 +269,7 @@ public class SleepMenuMod implements ModInitializer {
 
     private boolean setTime(MinecraftServer server, long targetTime) {
         server.getCommands().performPrefixedCommand(
-            server.createCommandSourceStack().withPermission(PermissionSet.ALL_PERMISSIONS),
+            server.createCommandSourceStack().withPermission(PermissionSet.ALL_PERMISSIONS).withSuppressedOutput(),
             "time set " + targetTime
         );
         return true;
@@ -286,7 +286,7 @@ public class SleepMenuMod implements ModInitializer {
         }
 
         server.getCommands().performPrefixedCommand(
-            server.createCommandSourceStack().withPermission(PermissionSet.ALL_PERMISSIONS),
+            server.createCommandSourceStack().withPermission(PermissionSet.ALL_PERMISSIONS).withSuppressedOutput(),
             weatherCommand
         );
         return true;
@@ -557,3 +557,4 @@ public class SleepMenuMod implements ModInitializer {
         }
     }
 }
+
