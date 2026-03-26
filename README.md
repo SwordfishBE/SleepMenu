@@ -99,6 +99,12 @@ chmod +x gradlew
 
 ---
 
+## ⁉️ Credits/Idea
+
+Based on the datapack created by TOLoneWolf's: [Sleep Menu System for Hypermine SMP](https://www.reddit.com/r/Hypermine/comments/4yegs2/hypermine_19_bed_sleep_menu_system_one_person/)
+
+---
+
 ## 📄 License
 
 Released under the [AGPL-3.0 License](LICENSE).
