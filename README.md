@@ -3,6 +3,8 @@
 SleepMenu is a server-side Fabric mod for Minecraft.
 Players standing on a bed get a clickable chat menu to change time and weather.
 
+Stand on a bed, click your choice, and shape the sky: day, night, clear, rain, or thunder.
+
 ---
 
 ## 🎮 Commands
@@ -23,9 +25,10 @@ Options:
 
 ---
 
-## 🔨 Server-side only
+## 🔨 Server-side
 
 This mod runs fully server-side. Clients do not need to install the mod.
+Also works in single-player (without LuckPerms support).
 
 ---
 
