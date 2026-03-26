@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "sleepmenu",
+  "version": "${version}",
+  "name": "Sleep Menu",
+  "description": "Server-side bed menu for changing time and weather.",
+  "authors": [
+    "SwordfishBE"
+  ],
+  "contact": {
+    "homepage": "https://github.com/SwordfishBE/SleepMenu",
+    "sources": "https://github.com/SwordfishBE/SleepMenu",
+    "issues": "https://github.com/SwordfishBE/SleepMenu/issues",
+    "email": "swordfishbe@locutus.net"
+  },
+  "license": "AGPL-3.0",
+  "icon": "assets/sleepmenu/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "net.sleepmenu.SleepMenuMod"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.18.4",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
