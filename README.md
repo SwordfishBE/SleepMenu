@@ -15,13 +15,7 @@ Stand on a bed, click your choice, and shape the sky: day, night, clear, rain, o
 
 Options:
 
-- `day`
-- `midnight`
-- `night`
-- `noon`
-- `clear`
-- `rain`
-- `thunder`
+`day`, `midnight`, `night`, `noon`, `clear`, `rain` and `thunder`
 
 ---
 
@@ -104,7 +98,7 @@ chmod +x gradlew
 
 ## ⁉️ Credits/Idea
 
-Based on the datapack created by TOLoneWolf's: [Sleep Menu System for Hypermine SMP](https://www.reddit.com/r/Hypermine/comments/4yegs2/hypermine_19_bed_sleep_menu_system_one_person/)
+Based on the command blocks setup created by TOLoneWolf's: [Sleep Menu System for Hypermine SMP](https://www.reddit.com/r/Hypermine/comments/4yegs2/hypermine_19_bed_sleep_menu_system_one_person/)
 
 ---
 
