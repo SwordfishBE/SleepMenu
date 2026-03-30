@@ -2,6 +2,9 @@ package net.sleepmenu;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonSyntaxException;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.fabricmc.api.ModInitializer;
@@ -25,7 +28,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.lang.reflect.Method;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -41,6 +47,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class SleepMenuMod implements ModInitializer {
     public static final String MOD_ID = "sleepmenu";
     private static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
+    private static final String MODRINTH_PROJECT_ID = "aZy0VkOR";
 
     private static final String PERM_USE = "sleepmenu.use";
     private static final String PERM_TIME_DAY = "sleepmenu.time.day";
@@ -76,6 +83,7 @@ public class SleepMenuMod implements ModInitializer {
 
         registerCommands();
         ServerTickEvents.END_SERVER_TICK.register(this::onServerTick);
+        UpdateChecker.checkForUpdatesAsync();
 
         logInfo("Initialized");
     }
@@ -364,137 +372,136 @@ public class SleepMenuMod implements ModInitializer {
     }
 
     private static final class PermissionService {
-        private final LuckPermsBridge luckPermsBridge;
         private final SleepMenuConfig config;
 
         private PermissionService(SleepMenuConfig config) {
             this.config = config;
-            this.luckPermsBridge = LuckPermsBridge.tryCreate();
-
-            if (luckPermsBridge == null) {
-                logInfo("LuckPerms not found, fallback mode: " + config.noLuckPermsAccessMode);
-            } else {
+            if (FabricLoader.getInstance().isModLoaded("luckperms")) {
                 logInfo("LuckPerms detected, permission nodes are active.");
+            } else {
+                logInfo("LuckPerms not found, fallback mode: " + config.noLuckPermsAccessMode);
             }
         }
 
         private boolean hasPermission(ServerPlayer player, String node) {
-            if (luckPermsBridge == null) {
-                return switch (config.noLuckPermsAccessMode) {
-                    case OP_ONLY -> player.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER);
-                    case EVERYONE -> true;
-                };
-            }
-
-            return luckPermsBridge.hasPermission(player.getUUID(), node);
+            return me.lucko.fabric.api.permissions.v0.Permissions.check(
+                player,
+                node,
+                config.noLuckPermsAccessMode == NoLuckPermsAccessMode.EVERYONE
+            );
         }
     }
 
-    private static final class LuckPermsBridge {
-        private final Method providerGet;
-        private final Method getUserManager;
-        private final Method getUser;
-        private final Method loadUser;
-        private final Method getQueryOptions;
-        private final Method getCachedData;
-        private final Method getPermissionData;
-        private final Method checkPermission;
-        private final Method asBoolean;
+    private static final class UpdateChecker {
+        private static final Gson GSON = new Gson();
+        private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
+        private static final String CURRENT_VERSION = FabricLoader.getInstance()
+            .getModContainer(MOD_ID)
+            .map(container -> container.getMetadata().getVersion().getFriendlyString())
+            .orElse("0.0.0");
 
-        private boolean warningPrinted;
+        private static void checkForUpdatesAsync() {
+            CompletableFuture.runAsync(() -> {
+                try {
+                    HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create("https://api.modrinth.com/v2/project/" + MODRINTH_PROJECT_ID + "/version"))
+                        .header("User-Agent", "SwordfishBE/SleepMenu/" + CURRENT_VERSION)
+                        .GET()
+                        .build();
 
-        private LuckPermsBridge(
-            Method providerGet,
-            Method getUserManager,
-            Method getUser,
-            Method loadUser,
-            Method getQueryOptions,
-            Method getCachedData,
-            Method getPermissionData,
-            Method checkPermission,
-            Method asBoolean
-        ) {
-            this.providerGet = providerGet;
-            this.getUserManager = getUserManager;
-            this.getUser = getUser;
-            this.loadUser = loadUser;
-            this.getQueryOptions = getQueryOptions;
-            this.getCachedData = getCachedData;
-            this.getPermissionData = getPermissionData;
-            this.checkPermission = checkPermission;
-            this.asBoolean = asBoolean;
+                    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+                    if (response.statusCode() != 200) {
+                        LOGGER.warn("[SleepMenu] Modrinth update check failed with status {}.", response.statusCode());
+                        return;
+                    }
+
+                    String newestVersion = findNewestPublishedVersion(response.body());
+                    if (newestVersion == null) {
+                        return;
+                    }
+
+                    if (compareVersions(newestVersion, CURRENT_VERSION) > 0) {
+                        LOGGER.warn("[SleepMenu] Update available: {} -> {}", CURRENT_VERSION, newestVersion);
+                        LOGGER.warn("[SleepMenu] Download: https://modrinth.com/project/{}/versions", MODRINTH_PROJECT_ID);
+                    }
+                } catch (Exception e) {
+                    LOGGER.warn("[SleepMenu] Modrinth update check failed.", e);
+                }
+            });
         }
 
-        private static LuckPermsBridge tryCreate() {
-            try {
-                Class<?> providerClass = Class.forName("net.luckperms.api.LuckPermsProvider");
-                Class<?> luckPermsClass = Class.forName("net.luckperms.api.LuckPerms");
-                Class<?> userManagerClass = Class.forName("net.luckperms.api.model.user.UserManager");
-                Class<?> userClass = Class.forName("net.luckperms.api.model.user.User");
-                Class<?> cachedDataManagerClass = Class.forName("net.luckperms.api.cacheddata.CachedDataManager");
-                Class<?> queryOptionsClass = Class.forName("net.luckperms.api.query.QueryOptions");
-                Class<?> cachedPermissionDataClass = Class.forName("net.luckperms.api.cacheddata.CachedPermissionData");
-                Class<?> tristateClass = Class.forName("net.luckperms.api.util.Tristate");
-
-                Method providerGet = providerClass.getMethod("get");
-                Method getUserManager = luckPermsClass.getMethod("getUserManager");
-                Method getUser = userManagerClass.getMethod("getUser", UUID.class);
-                Method loadUser = userManagerClass.getMethod("loadUser", UUID.class);
-                Method getQueryOptions = userClass.getMethod("getQueryOptions");
-                Method getCachedData = userClass.getMethod("getCachedData");
-                Method getPermissionData = cachedDataManagerClass.getMethod("getPermissionData", queryOptionsClass);
-                Method checkPermission = cachedPermissionDataClass.getMethod("checkPermission", String.class);
-                Method asBoolean = tristateClass.getMethod("asBoolean");
-
-                return new LuckPermsBridge(
-                    providerGet,
-                    getUserManager,
-                    getUser,
-                    loadUser,
-                    getQueryOptions,
-                    getCachedData,
-                    getPermissionData,
-                    checkPermission,
-                    asBoolean
-                );
-            } catch (ClassNotFoundException ignored) {
-                return null;
-            } catch (ReflectiveOperationException e) {
-                LOGGER.error("[SleepMenu] Failed to initialize LuckPerms bridge. Fallback mode will be used.", e);
+        private static String findNewestPublishedVersion(String responseBody) {
+            JsonElement root = GSON.fromJson(responseBody, JsonElement.class);
+            if (!(root instanceof JsonArray versions)) {
                 return null;
             }
+
+            String newestVersion = null;
+            for (JsonElement element : versions) {
+                if (!(element instanceof JsonObject versionObject)) {
+                    continue;
+                }
+
+                String versionType = getString(versionObject, "version_type");
+                if ("alpha".equalsIgnoreCase(versionType) || "beta".equalsIgnoreCase(versionType)) {
+                    continue;
+                }
+
+                String versionNumber = getString(versionObject, "version_number");
+                if (versionNumber == null || versionNumber.isBlank()) {
+                    continue;
+                }
+
+                if (newestVersion == null || compareVersions(versionNumber, newestVersion) > 0) {
+                    newestVersion = versionNumber;
+                }
+            }
+
+            return newestVersion;
         }
 
-        private boolean hasPermission(UUID playerUuid, String node) {
+        private static String getString(JsonObject object, String key) {
+            JsonElement element = object.get(key);
+            if (element == null || element.isJsonNull()) {
+                return null;
+            }
+            return element.getAsString();
+        }
+
+        private static int compareVersions(String left, String right) {
+            String[] leftParts = normalizeVersion(left).split("\\.");
+            String[] rightParts = normalizeVersion(right).split("\\.");
+            int maxLength = Math.max(leftParts.length, rightParts.length);
+
+            for (int i = 0; i < maxLength; i++) {
+                int leftValue = i < leftParts.length ? parseVersionPart(leftParts[i]) : 0;
+                int rightValue = i < rightParts.length ? parseVersionPart(rightParts[i]) : 0;
+                int comparison = Integer.compare(leftValue, rightValue);
+                if (comparison != 0) {
+                    return comparison;
+                }
+            }
+
+            return 0;
+        }
+
+        private static String normalizeVersion(String version) {
+            return version.toLowerCase(Locale.ROOT)
+                .replace("release-", "")
+                .replace("version-", "")
+                .replaceFirst("^v", "")
+                .replaceAll("[^0-9.]", ".");
+        }
+
+        private static int parseVersionPart(String value) {
+            if (value == null || value.isBlank()) {
+                return 0;
+            }
+
             try {
-                Object luckPerms = providerGet.invoke(null);
-                Object userManager = getUserManager.invoke(luckPerms);
-                Object user = getUser.invoke(userManager, playerUuid);
-
-                if (user == null) {
-                    CompletableFuture<?> future = (CompletableFuture<?>) loadUser.invoke(userManager, playerUuid);
-                    user = future.getNow(null);
-                    if (user == null) {
-                        user = future.join();
-                    }
-                }
-
-                if (user == null) {
-                    return false;
-                }
-
-                Object queryOptions = getQueryOptions.invoke(user);
-                Object cachedDataManager = getCachedData.invoke(user);
-                Object cachedPermissionData = getPermissionData.invoke(cachedDataManager, queryOptions);
-                Object tristate = checkPermission.invoke(cachedPermissionData, node);
-
-                return (boolean) asBoolean.invoke(tristate);
-            } catch (Exception e) {
-                if (!warningPrinted) {
-                    warningPrinted = true;
-                    LOGGER.warn("[SleepMenu] LuckPerms permission check failed. Fallback mode will be used.", e);
-                }
-                return true;
+                return Integer.parseInt(value);
+            } catch (NumberFormatException ignored) {
+                return 0;
             }
         }
     }
@@ -557,4 +564,3 @@ public class SleepMenuMod implements ModInitializer {
         }
     }
 }
-
