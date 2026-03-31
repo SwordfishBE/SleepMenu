@@ -5,6 +5,11 @@ Players standing on a bed get a clickable chat menu to change time and weather.
 
 Stand on a bed, click your choice, and shape the sky: day, night, clear, rain, or thunder.
 
+[![GitHub Release](https://img.shields.io/github/v/release/SwordfishBE/SleepMenu?display_name=release&logo=github)](https://github.com/SwordfishBE/SleepMenu/releases)
+[![GitHub Downloads](https://img.shields.io/github/downloads/SwordfishBE/SleepMenu/total?logo=github)](https://github.com/SwordfishBE/SleepMenu/releases)
+[![Modrinth Downloads](https://img.shields.io/modrinth/dt/aZy0VkOR?logo=modrinth&logoColor=white&label=Modrinth%20downloads)](https://modrinth.com/mod/sleepmenu)
+[![CurseForge Downloads](https://img.shields.io/curseforge/dt/1496098?logo=curseforge&logoColor=white&label=CurseForge%20downloads)](https://www.curseforge.com/minecraft/mc-mods/sleepmenu)
+
 ---
 
 ## 🎮 Commands
@@ -77,10 +82,17 @@ Config file: `config/sleepmenu.json`
 
 ## 📦 Installation
 
-1. Install [Fabric Loader](https://fabricmc.net/use/) for Minecraft.
-2. Download [Fabric API](https://modrinth.com/mod/fabric-api) and place it in `mods/`.
-3. Download `sleepmenu-<version>.jar` and place it in `mods/`.
-4. Launch Minecraft. The config is created automatically on first run.
+| Platform   | Link |
+|------------|------|
+| GitHub     | [Releases](https://github.com/SwordfishBE/SleepMenu/releases) |
+| Modrinth   | [SleepMenu](https://modrinth.com/mod/sleepmenu) |
+| CurseForge | [SleepMenu](https://www.curseforge.com/minecraft/mc-mods/sleepmenu)
+
+1. Download the latest JAR from your preferred platform above.
+2. Place the JAR in your server's `mods/` folder.
+3. Make sure [Fabric API](https://modrinth.com/mod/fabric-api) is also installed.
+4. Start
+5. Minecraft — the config file will be created automatically.
 
 ---
 
