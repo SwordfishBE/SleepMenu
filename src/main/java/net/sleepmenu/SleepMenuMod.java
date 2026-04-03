@@ -525,7 +525,8 @@ public class SleepMenuMod implements ModInitializer {
             if (Files.exists(CONFIG_PATH)) {
                 try {
                     String raw = Files.readString(CONFIG_PATH);
-                    config = GSON.fromJson(raw, SleepMenuConfig.class);
+                    String json = stripJsonComments(raw);
+                    config = GSON.fromJson(json, SleepMenuConfig.class);
                 } catch (IOException | JsonSyntaxException e) {
                     LOGGER.warn("[SleepMenu] Failed to read config, using defaults.", e);
                 }
@@ -557,10 +558,107 @@ public class SleepMenuMod implements ModInitializer {
         private void save() {
             try {
                 Files.createDirectories(CONFIG_PATH.getParent());
-                Files.writeString(CONFIG_PATH, GSON.toJson(this));
+                Files.writeString(CONFIG_PATH, toCommentedJson(this));
             } catch (IOException e) {
                 LOGGER.error("[SleepMenu] Failed to write config file: {}", CONFIG_PATH, e);
             }
+        }
+
+        private static String toCommentedJson(SleepMenuConfig config) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("{\n");
+            appendComment(sb, "Minimum ticks between successful Sleep Menu actions for the same player.");
+            appendComment(sb, "20 ticks = 1 second, so the default 400 ticks equals 20 seconds.");
+            appendProperty(sb, "cooldownTicks", config.cooldownTicks, true);
+
+            appendComment(sb, "Fallback access mode when LuckPerms is not installed on the server.");
+            appendComment(sb, "Use EVERYONE to allow all players, or OP_ONLY to restrict access to operators.");
+            appendProperty(sb, "noLuckPermsAccess", config.noLuckPermsAccess, false);
+            sb.append("}\n");
+            return sb.toString();
+        }
+
+        private static void appendComment(StringBuilder sb, String comment) {
+            sb.append("  // ").append(comment).append('\n');
+        }
+
+        private static void appendProperty(StringBuilder sb, String key, int value, boolean trailingComma) {
+            sb.append("  \"").append(key).append("\": ").append(value);
+            if (trailingComma) {
+                sb.append(',');
+            }
+            sb.append('\n').append('\n');
+        }
+
+        private static void appendProperty(StringBuilder sb, String key, String value, boolean trailingComma) {
+            sb.append("  \"").append(key).append("\": ").append(GSON.toJson(value));
+            if (trailingComma) {
+                sb.append(',');
+            }
+            sb.append('\n').append('\n');
+        }
+
+        private static String stripJsonComments(String input) {
+            StringBuilder sb = new StringBuilder(input.length());
+            boolean inString = false;
+            boolean escaping = false;
+            boolean inLineComment = false;
+            boolean inBlockComment = false;
+
+            for (int i = 0; i < input.length(); i++) {
+                char current = input.charAt(i);
+                char next = i + 1 < input.length() ? input.charAt(i + 1) : '\0';
+
+                if (inLineComment) {
+                    if (current == '\n' || current == '\r') {
+                        inLineComment = false;
+                        sb.append(current);
+                    }
+                    continue;
+                }
+
+                if (inBlockComment) {
+                    if (current == '*' && next == '/') {
+                        inBlockComment = false;
+                        i++;
+                    }
+                    continue;
+                }
+
+                if (inString) {
+                    sb.append(current);
+                    if (escaping) {
+                        escaping = false;
+                    } else if (current == '\\') {
+                        escaping = true;
+                    } else if (current == '"') {
+                        inString = false;
+                    }
+                    continue;
+                }
+
+                if (current == '"') {
+                    inString = true;
+                    sb.append(current);
+                    continue;
+                }
+
+                if (current == '/' && next == '/') {
+                    inLineComment = true;
+                    i++;
+                    continue;
+                }
+
+                if (current == '/' && next == '*') {
+                    inBlockComment = true;
+                    i++;
+                    continue;
+                }
+
+                sb.append(current);
+            }
+
+            return sb.toString();
         }
     }
 }
