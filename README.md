@@ -5,8 +5,6 @@ Players standing on a bed get a clickable chat menu to change time and weather.
 
 Stand on a bed, click your choice, and shape the sky: day, night, clear, rain, or thunder.
 
-If `Mod Menu` and `Cloth Config` are installed on the client, the config can also be edited through an in-game config screen. Dedicated servers do not need either dependency.
-
 [![GitHub Release](https://img.shields.io/github/v/release/SwordfishBE/SleepMenu?display_name=release&logo=github)](https://github.com/SwordfishBE/SleepMenu/releases)
 [![GitHub Downloads](https://img.shields.io/github/downloads/SwordfishBE/SleepMenu/total?logo=github)](https://github.com/SwordfishBE/SleepMenu/releases)
 [![Modrinth Downloads](https://img.shields.io/modrinth/dt/aZy0VkOR?logo=modrinth&logoColor=white&label=Modrinth%20downloads)](https://modrinth.com/mod/sleepmenu)
@@ -23,6 +21,8 @@ If `Mod Menu` and `Cloth Config` are installed on the client, the config can als
 Options:
 
 `day`, `midnight`, `night`, `noon`, `clear`, `rain` and `thunder`
+
+If `Mod Menu` and `Cloth Config` are installed on the client, the config can also be edited through an in-game config screen. Dedicated servers do not need either dependency.
 
 ---
 
