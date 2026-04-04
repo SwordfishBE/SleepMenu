@@ -34,6 +34,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -48,6 +50,7 @@ public class SleepMenuMod implements ModInitializer {
     public static final String MOD_ID = "sleepmenu";
     private static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
     private static final String MODRINTH_PROJECT_ID = "aZy0VkOR";
+    private static SleepMenuMod INSTANCE;
 
     private static final String PERM_USE = "sleepmenu.use";
     private static final String PERM_TIME_DAY = "sleepmenu.time.day";
@@ -72,14 +75,17 @@ public class SleepMenuMod implements ModInitializer {
 
     private final Map<UUID, PlayerMenuState> states = new ConcurrentHashMap<>();
     private final Map<UUID, Long> lastActionTickByPlayer = new ConcurrentHashMap<>();
+    private final Map<ActionType, ArrayDeque<Long>> recentActionTicksByType = new EnumMap<>(ActionType.class);
 
     private SleepMenuConfig config;
     private PermissionService permissionService;
 
     @Override
     public void onInitialize() {
+        INSTANCE = this;
         config = SleepMenuConfig.load();
         permissionService = new PermissionService(config);
+        initializeRateLimitState();
 
         registerCommands();
         ServerTickEvents.END_SERVER_TICK.register(this::onServerTick);
@@ -142,7 +148,14 @@ public class SleepMenuMod implements ModInitializer {
     private void reloadConfig() {
         this.config = SleepMenuConfig.load();
         this.permissionService = new PermissionService(this.config);
+        initializeRateLimitState();
         logInfo("Config reloaded");
+    }
+
+    private void initializeRateLimitState() {
+        for (ActionType type : ActionType.values()) {
+            recentActionTicksByType.computeIfAbsent(type, ignored -> new ArrayDeque<>());
+        }
     }
 
     private void onServerTick(MinecraftServer server) {
@@ -255,6 +268,12 @@ public class SleepMenuMod implements ModInitializer {
             return false;
         }
 
+        String antiSpamMessage = getAntiSpamBlockMessage(action.type, nowTick);
+        if (antiSpamMessage != null) {
+            player.sendOverlayMessage(Component.literal(antiSpamMessage));
+            return false;
+        }
+
         boolean applied = switch (action.type) {
             case TIME -> setTime(server, action.targetTime);
             case WEATHER -> setWeather(server, action.raining, action.thundering);
@@ -266,6 +285,7 @@ public class SleepMenuMod implements ModInitializer {
         }
 
         lastActionTickByPlayer.put(player.getUUID(), nowTick);
+        recordSuccessfulAction(action.type, nowTick);
         broadcastAction(server, player, action.broadcastMessage);
 
         if (fromDirectSet) {
@@ -304,6 +324,54 @@ public class SleepMenuMod implements ModInitializer {
         return server.getTickCount();
     }
 
+    private String getAntiSpamBlockMessage(ActionType actionType, long nowTick) {
+        int changeLimit = getActionLimit(actionType);
+        if (changeLimit <= 0 || config.antiSpamWindowTicks <= 0) {
+            return null;
+        }
+
+        ArrayDeque<Long> actionTicks = recentActionTicksByType.computeIfAbsent(actionType, ignored -> new ArrayDeque<>());
+        pruneExpiredActionTicks(actionTicks, nowTick);
+        if (actionTicks.size() < changeLimit) {
+            return null;
+        }
+
+        long oldestRelevantTick = actionTicks.peekFirst();
+        long remainingTicks = Math.max(1L, config.antiSpamWindowTicks - (nowTick - oldestRelevantTick));
+        return getActionLabel(actionType) + " anti-spam is active: limit reached for the last "
+            + config.antiSpamWindowTicks + " ticks. Try again in about " + remainingTicks + " ticks.";
+    }
+
+    private void recordSuccessfulAction(ActionType actionType, long nowTick) {
+        if (config.antiSpamWindowTicks <= 0) {
+            return;
+        }
+
+        ArrayDeque<Long> actionTicks = recentActionTicksByType.computeIfAbsent(actionType, ignored -> new ArrayDeque<>());
+        pruneExpiredActionTicks(actionTicks, nowTick);
+        actionTicks.addLast(nowTick);
+    }
+
+    private void pruneExpiredActionTicks(ArrayDeque<Long> actionTicks, long nowTick) {
+        while (!actionTicks.isEmpty() && nowTick - actionTicks.peekFirst() >= config.antiSpamWindowTicks) {
+            actionTicks.removeFirst();
+        }
+    }
+
+    private int getActionLimit(ActionType actionType) {
+        return switch (actionType) {
+            case TIME -> config.timeChangeLimit;
+            case WEATHER -> config.weatherChangeLimit;
+        };
+    }
+
+    private String getActionLabel(ActionType actionType) {
+        return switch (actionType) {
+            case TIME -> "Time";
+            case WEATHER -> "Weather";
+        };
+    }
+
     private void broadcastAction(MinecraftServer server, ServerPlayer actor, String action) {
         Component message = Component.literal(actor.getName().getString() + ": " + action);
         server.getPlayerList().broadcastSystemMessage(message, false);
@@ -329,6 +397,20 @@ public class SleepMenuMod implements ModInitializer {
 
     private static void logInfo(String message) {
         LOGGER.info("[SleepMenu] {}", message);
+    }
+
+    static SleepMenuConfig loadConfigForEditing() {
+        return SleepMenuConfig.load().copy();
+    }
+
+    static void applyEditedConfig(SleepMenuConfig editedConfig) {
+        SleepMenuConfig normalizedConfig = editedConfig.copy();
+        normalizedConfig.normalize();
+        normalizedConfig.save();
+
+        if (INSTANCE != null) {
+            INSTANCE.reloadConfig();
+        }
     }
 
     private static final class PlayerMenuState {
@@ -506,20 +588,23 @@ public class SleepMenuMod implements ModInitializer {
         }
     }
 
-    private enum NoLuckPermsAccessMode {
+    enum NoLuckPermsAccessMode {
         EVERYONE,
         OP_ONLY
     }
 
-    private static final class SleepMenuConfig {
+    static final class SleepMenuConfig {
         private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
         private static final Path CONFIG_PATH = FabricLoader.getInstance().getConfigDir().resolve("sleepmenu.json");
 
-        private int cooldownTicks = 400;
-        private String noLuckPermsAccess = "EVERYONE";
-        private transient NoLuckPermsAccessMode noLuckPermsAccessMode = NoLuckPermsAccessMode.EVERYONE;
+        int cooldownTicks = 400;
+        int antiSpamWindowTicks = 12000;
+        int timeChangeLimit = 4;
+        int weatherChangeLimit = 4;
+        String noLuckPermsAccess = "EVERYONE";
+        transient NoLuckPermsAccessMode noLuckPermsAccessMode = NoLuckPermsAccessMode.EVERYONE;
 
-        private static SleepMenuConfig load() {
+        static SleepMenuConfig load() {
             SleepMenuConfig config = null;
 
             if (Files.exists(CONFIG_PATH)) {
@@ -541,9 +626,32 @@ public class SleepMenuMod implements ModInitializer {
             return config;
         }
 
-        private void normalize() {
+        SleepMenuConfig copy() {
+            SleepMenuConfig copy = new SleepMenuConfig();
+            copy.cooldownTicks = cooldownTicks;
+            copy.antiSpamWindowTicks = antiSpamWindowTicks;
+            copy.timeChangeLimit = timeChangeLimit;
+            copy.weatherChangeLimit = weatherChangeLimit;
+            copy.noLuckPermsAccess = noLuckPermsAccess;
+            copy.noLuckPermsAccessMode = noLuckPermsAccessMode;
+            return copy;
+        }
+
+        void normalize() {
             if (cooldownTicks < 0) {
                 cooldownTicks = 0;
+            }
+
+            if (antiSpamWindowTicks < 0) {
+                antiSpamWindowTicks = 0;
+            }
+
+            if (timeChangeLimit < 0) {
+                timeChangeLimit = 0;
+            }
+
+            if (weatherChangeLimit < 0) {
+                weatherChangeLimit = 0;
             }
 
             try {
@@ -555,7 +663,7 @@ public class SleepMenuMod implements ModInitializer {
             noLuckPermsAccess = noLuckPermsAccessMode.name();
         }
 
-        private void save() {
+        void save() {
             try {
                 Files.createDirectories(CONFIG_PATH.getParent());
                 Files.writeString(CONFIG_PATH, toCommentedJson(this));
@@ -570,6 +678,18 @@ public class SleepMenuMod implements ModInitializer {
             appendComment(sb, "Minimum ticks between successful Sleep Menu actions for the same player.");
             appendComment(sb, "20 ticks = 1 second, so the default 400 ticks equals 20 seconds.");
             appendProperty(sb, "cooldownTicks", config.cooldownTicks, true);
+
+            appendComment(sb, "Global anti-spam window for successful changes.");
+            appendComment(sb, "Default 12000 ticks = 10 minutes. Set to 0 to disable the anti-spam window.");
+            appendProperty(sb, "antiSpamWindowTicks", config.antiSpamWindowTicks, true);
+
+            appendComment(sb, "Maximum successful time changes allowed for all players together within the anti-spam window.");
+            appendComment(sb, "Set to 0 to disable the time anti-spam limit.");
+            appendProperty(sb, "timeChangeLimit", config.timeChangeLimit, true);
+
+            appendComment(sb, "Maximum successful weather changes allowed for all players together within the anti-spam window.");
+            appendComment(sb, "Set to 0 to disable the weather anti-spam limit.");
+            appendProperty(sb, "weatherChangeLimit", config.weatherChangeLimit, true);
 
             appendComment(sb, "Fallback access mode when LuckPerms is not installed on the server.");
             appendComment(sb, "Use EVERYONE to allow all players, or OP_ONLY to restrict access to operators.");

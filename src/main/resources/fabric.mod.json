@@ -19,6 +19,9 @@
   "entrypoints": {
     "main": [
       "net.sleepmenu.SleepMenuMod"
+    ],
+    "modmenu": [
+      "net.sleepmenu.SleepMenuModMenuIntegration"
     ]
   },
   "depends": {
@@ -27,6 +30,10 @@
     "java": ">=25",
     "fabric-api": "*",
     "fabric-permissions-api-v0": "*"
+  },
+  "suggests": {
+    "modmenu": "*",
+    "cloth-config": "*"
   }
 }
 

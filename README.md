@@ -2,6 +2,8 @@
 
 SleepMenu is a server-side Fabric mod for Minecraft.
 Players standing on a bed get a clickable chat menu to change time and weather.
+If `Mod Menu` and `Cloth Config` are installed on the client, the same config can also be edited through an in-game config screen. Dedicated servers do not need either dependency.
+
 
 Stand on a bed, click your choice, and shape the sky: day, night, clear, rain, or thunder.
 
@@ -71,11 +73,17 @@ Config file: `config/sleepmenu.json`
 ```json
 {
   "cooldownTicks": 400,
+  "antiSpamWindowTicks": 12000,
+  "timeChangeLimit": 4,
+  "weatherChangeLimit": 4,
   "noLuckPermsAccess": "EVERYONE"
 }
 ```
 
 - `cooldownTicks`: minimum ticks between successful changes per player (20 ticks = 1 second).
+- `antiSpamWindowTicks`: shared anti-spam window for successful changes across all players. Default `12000` ticks = 10 minutes.
+- `timeChangeLimit`: maximum successful time changes allowed inside the anti-spam window. Set `0` to disable.
+- `weatherChangeLimit`: maximum successful weather changes allowed inside the anti-spam window. Set `0` to disable.
 - `noLuckPermsAccess`: `EVERYONE` or `OP_ONLY`.
 
 ---
