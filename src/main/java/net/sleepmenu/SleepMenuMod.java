@@ -11,6 +11,8 @@ import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.loader.api.FabricLoader;
+import net.fabricmc.loader.api.metadata.ModMetadata;
+import net.fabricmc.loader.api.Version;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
@@ -29,11 +31,14 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.EnumMap;
 import java.util.HashMap;
@@ -50,6 +55,12 @@ public class SleepMenuMod implements ModInitializer {
     public static final String MOD_ID = "sleepmenu";
     private static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
     private static final String MODRINTH_PROJECT_ID = "aZy0VkOR";
+    private static final ModMetadata MOD_METADATA = FabricLoader.getInstance()
+        .getModContainer(MOD_ID)
+        .orElseThrow(() -> new IllegalStateException("Missing mod metadata for " + MOD_ID))
+        .getMetadata();
+    private static final String MOD_NAME = MOD_METADATA.getName();
+    private static final String LOG_PREFIX = "[" + MOD_NAME + "]";
     private static SleepMenuMod INSTANCE;
 
     private static final String PERM_USE = "sleepmenu.use";
@@ -91,7 +102,7 @@ public class SleepMenuMod implements ModInitializer {
         ServerTickEvents.END_SERVER_TICK.register(this::onServerTick);
         UpdateChecker.checkForUpdatesAsync();
 
-        logInfo("Initialized");
+        LOGGER.info("{} Mod initialized. Version: {}", LOG_PREFIX, currentModVersion());
     }
 
     private void registerCommands() {
@@ -104,7 +115,7 @@ public class SleepMenuMod implements ModInitializer {
                         return 0;
                     }
 
-                    reloadConfig();
+                    reloadConfig(true);
                     source.sendSuccess(() -> Component.literal("[SleepMenu] Config reloaded."), false);
                     return 1;
                 }))
@@ -146,10 +157,16 @@ public class SleepMenuMod implements ModInitializer {
     }
 
     private void reloadConfig() {
+        reloadConfig(false);
+    }
+
+    private void reloadConfig(boolean viaCommand) {
         this.config = SleepMenuConfig.load();
         this.permissionService = new PermissionService(this.config);
         initializeRateLimitState();
-        logInfo("Config reloaded");
+        if (viaCommand) {
+            LOGGER.info("{} Config reloaded via command.", LOG_PREFIX);
+        }
     }
 
     private void initializeRateLimitState() {
@@ -395,8 +412,19 @@ public class SleepMenuMod implements ModInitializer {
         return map;
     }
 
-    private static void logInfo(String message) {
-        LOGGER.info("[SleepMenu] {}", message);
+    private static void logDebug(String message, Object... arguments) {
+        LOGGER.debug("{} " + message, prependLogPrefix(arguments));
+    }
+
+    private static Object[] prependLogPrefix(Object... arguments) {
+        Object[] prefixed = new Object[arguments.length + 1];
+        prefixed[0] = LOG_PREFIX;
+        System.arraycopy(arguments, 0, prefixed, 1, arguments.length);
+        return prefixed;
+    }
+
+    private static String currentModVersion() {
+        return MOD_METADATA.getVersion().getFriendlyString();
     }
 
     static SleepMenuConfig loadConfigForEditing() {
@@ -459,9 +487,9 @@ public class SleepMenuMod implements ModInitializer {
         private PermissionService(SleepMenuConfig config) {
             this.config = config;
             if (FabricLoader.getInstance().isModLoaded("luckperms")) {
-                logInfo("LuckPerms detected, permission nodes are active.");
+                logDebug("LuckPerms detected, permission nodes are active.");
             } else {
-                logInfo("LuckPerms not found, fallback mode: " + config.noLuckPermsAccessMode);
+                logDebug("LuckPerms not found, fallback mode: {}", config.noLuckPermsAccessMode);
             }
         }
 
@@ -476,70 +504,99 @@ public class SleepMenuMod implements ModInitializer {
 
     private static final class UpdateChecker {
         private static final Gson GSON = new Gson();
-        private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
-        private static final String CURRENT_VERSION = FabricLoader.getInstance()
-            .getModContainer(MOD_ID)
-            .map(container -> container.getMetadata().getVersion().getFriendlyString())
-            .orElse("0.0.0");
+        private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(10))
+            .build();
+        private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
 
         private static void checkForUpdatesAsync() {
             CompletableFuture.runAsync(() -> {
+                String currentVersion = currentModVersion();
                 try {
                     HttpRequest request = HttpRequest.newBuilder()
                         .uri(URI.create("https://api.modrinth.com/v2/project/" + MODRINTH_PROJECT_ID + "/version"))
-                        .header("User-Agent", "SwordfishBE/SleepMenu/" + CURRENT_VERSION)
+                        .timeout(REQUEST_TIMEOUT)
+                        .header("User-Agent", "SwordfishBE/SleepMenu/" + currentVersion)
                         .GET()
                         .build();
 
                     HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
                     if (response.statusCode() != 200) {
-                        LOGGER.warn("[SleepMenu] Modrinth update check failed with status {}.", response.statusCode());
+                        LOGGER.debug("{} Modrinth update check failed with status {}.", LOG_PREFIX, response.statusCode());
                         return;
                     }
 
-                    String newestVersion = findNewestPublishedVersion(response.body());
+                    VersionCandidate newestVersion = findNewestPublishedVersion(response.body(), currentMinecraftVersion());
                     if (newestVersion == null) {
+                        LOGGER.debug("{} Modrinth update check found no valid release entries.", LOG_PREFIX);
                         return;
                     }
 
-                    if (compareVersions(newestVersion, CURRENT_VERSION) > 0) {
-                        LOGGER.warn("[SleepMenu] Update available: {} -> {}", CURRENT_VERSION, newestVersion);
-                        LOGGER.warn("[SleepMenu] Download: https://modrinth.com/project/{}/versions", MODRINTH_PROJECT_ID);
+                    if (isNewerVersion(newestVersion.versionNumber(), currentVersion)) {
+                        LOGGER.info("{} New version available: {} (current: {})", LOG_PREFIX, newestVersion.versionNumber(), currentVersion);
+                    } else {
+                        LOGGER.debug("{} No update available. Current: {}, latest compatible: {}",
+                            LOG_PREFIX,
+                            currentVersion,
+                            newestVersion.versionNumber());
                     }
                 } catch (Exception e) {
-                    LOGGER.warn("[SleepMenu] Modrinth update check failed.", e);
+                    if (e instanceof HttpConnectTimeoutException) {
+                        LOGGER.debug("{} Modrinth update check timed out after {} seconds.", LOG_PREFIX, REQUEST_TIMEOUT.toSeconds());
+                    } else {
+                        LOGGER.debug("{} Modrinth update check failed.", LOG_PREFIX, e);
+                    }
                 }
             });
         }
 
-        private static String findNewestPublishedVersion(String responseBody) {
+        private static VersionCandidate findNewestPublishedVersion(String responseBody, String minecraftVersion) {
             JsonElement root = GSON.fromJson(responseBody, JsonElement.class);
             if (!(root instanceof JsonArray versions)) {
                 return null;
             }
 
-            String newestVersion = null;
+            VersionCandidate newestCompatibleRelease = null;
+            VersionCandidate newestReleaseFallback = null;
             for (JsonElement element : versions) {
                 if (!(element instanceof JsonObject versionObject)) {
                     continue;
                 }
 
                 String versionType = getString(versionObject, "version_type");
-                if ("alpha".equalsIgnoreCase(versionType) || "beta".equalsIgnoreCase(versionType)) {
+                if (!"release".equalsIgnoreCase(versionType)) {
                     continue;
                 }
 
                 String versionNumber = getString(versionObject, "version_number");
-                if (versionNumber == null || versionNumber.isBlank()) {
+                if (!isValidVersionNumber(versionNumber)) {
                     continue;
                 }
 
-                if (newestVersion == null || compareVersions(versionNumber, newestVersion) > 0) {
-                    newestVersion = versionNumber;
+                Instant publishedAt = getPublishedAt(versionObject);
+                if (publishedAt == null) {
+                    continue;
+                }
+
+                VersionCandidate candidate = new VersionCandidate(versionNumber, publishedAt);
+                if (isNewerCandidate(candidate, newestReleaseFallback)) {
+                    newestReleaseFallback = candidate;
+                }
+
+                if (!jsonArrayContains(versionObject, "loaders", "fabric")) {
+                    continue;
+                }
+
+                if (!jsonArrayContains(versionObject, "game_versions", minecraftVersion)) {
+                    continue;
+                }
+
+                if (isNewerCandidate(candidate, newestCompatibleRelease)) {
+                    newestCompatibleRelease = candidate;
                 }
             }
 
-            return newestVersion;
+            return newestCompatibleRelease != null ? newestCompatibleRelease : newestReleaseFallback;
         }
 
         private static String getString(JsonObject object, String key) {
@@ -550,41 +607,78 @@ public class SleepMenuMod implements ModInitializer {
             return element.getAsString();
         }
 
-        private static int compareVersions(String left, String right) {
-            String[] leftParts = normalizeVersion(left).split("\\.");
-            String[] rightParts = normalizeVersion(right).split("\\.");
-            int maxLength = Math.max(leftParts.length, rightParts.length);
+        private static boolean jsonArrayContains(JsonObject object, String key, String expectedValue) {
+            JsonElement element = object.get(key);
+            if (!(element instanceof JsonArray array) || expectedValue == null || expectedValue.isBlank()) {
+                return false;
+            }
 
-            for (int i = 0; i < maxLength; i++) {
-                int leftValue = i < leftParts.length ? parseVersionPart(leftParts[i]) : 0;
-                int rightValue = i < rightParts.length ? parseVersionPart(rightParts[i]) : 0;
-                int comparison = Integer.compare(leftValue, rightValue);
-                if (comparison != 0) {
-                    return comparison;
+            for (JsonElement arrayElement : array) {
+                if (arrayElement != null
+                    && arrayElement.isJsonPrimitive()
+                    && expectedValue.equalsIgnoreCase(arrayElement.getAsString())) {
+                    return true;
                 }
             }
 
-            return 0;
+            return false;
         }
 
-        private static String normalizeVersion(String version) {
-            return version.toLowerCase(Locale.ROOT)
-                .replace("release-", "")
-                .replace("version-", "")
-                .replaceFirst("^v", "")
-                .replaceAll("[^0-9.]", ".");
-        }
-
-        private static int parseVersionPart(String value) {
-            if (value == null || value.isBlank()) {
-                return 0;
+        private static Instant getPublishedAt(JsonObject versionObject) {
+            String publishedAt = getString(versionObject, "date_published");
+            if (publishedAt == null || publishedAt.isBlank()) {
+                return null;
             }
 
             try {
-                return Integer.parseInt(value);
-            } catch (NumberFormatException ignored) {
-                return 0;
+                return Instant.parse(publishedAt);
+            } catch (Exception e) {
+                LOGGER.debug("{} Ignoring Modrinth version with invalid date_published: {}", LOG_PREFIX, publishedAt);
+                return null;
             }
+        }
+
+        private static boolean isNewerCandidate(VersionCandidate candidate, VersionCandidate currentBest) {
+            return currentBest == null || candidate.publishedAt().isAfter(currentBest.publishedAt());
+        }
+
+        private static boolean isNewerVersion(String candidateVersion, String currentVersion) {
+            try {
+                Version candidate = Version.parse(candidateVersion);
+                Version current = Version.parse(currentVersion);
+                return candidate.compareTo(current) > 0;
+            } catch (Exception e) {
+                LOGGER.debug("{} Failed to compare versions. Candidate: {}, current: {}",
+                    LOG_PREFIX,
+                    candidateVersion,
+                    currentVersion,
+                    e);
+                return false;
+            }
+        }
+
+        private static boolean isValidVersionNumber(String versionNumber) {
+            if (versionNumber == null || versionNumber.isBlank()) {
+                return false;
+            }
+
+            try {
+                Version.parse(versionNumber);
+                return true;
+            } catch (Exception e) {
+                LOGGER.debug("{} Ignoring Modrinth version with invalid version_number: {}", LOG_PREFIX, versionNumber);
+                return false;
+            }
+        }
+
+        private static String currentMinecraftVersion() {
+            return FabricLoader.getInstance()
+                .getModContainer("minecraft")
+                .map(container -> container.getMetadata().getVersion().getFriendlyString())
+                .orElse(null);
+        }
+
+        private record VersionCandidate(String versionNumber, Instant publishedAt) {
         }
     }
 
@@ -613,7 +707,7 @@ public class SleepMenuMod implements ModInitializer {
                     String json = stripJsonComments(raw);
                     config = GSON.fromJson(json, SleepMenuConfig.class);
                 } catch (IOException | JsonSyntaxException e) {
-                    LOGGER.warn("[SleepMenu] Failed to read config, using defaults.", e);
+                    LOGGER.warn("{} Failed to read config, using defaults.", LOG_PREFIX, e);
                 }
             }
 
@@ -668,7 +762,7 @@ public class SleepMenuMod implements ModInitializer {
                 Files.createDirectories(CONFIG_PATH.getParent());
                 Files.writeString(CONFIG_PATH, toCommentedJson(this));
             } catch (IOException e) {
-                LOGGER.error("[SleepMenu] Failed to write config file: {}", CONFIG_PATH, e);
+                LOGGER.error("{} Failed to write config file: {}", LOG_PREFIX, CONFIG_PATH, e);
             }
         }
 
