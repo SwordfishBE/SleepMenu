@@ -22,7 +22,7 @@ Options:
 
 `day`, `midnight`, `night`, `noon`, `clear`, `rain` and `thunder`
 
-If `Mod Menu` and `Cloth Config` are installed on the client, the config can also be edited through an in-game config screen. Dedicated servers do not need either dependency.
+If `Mod Menu` and `Cloth Config` are installed, the config can also be edited through an in-game config screen in single-player or while hosting locally. When connected to a remote dedicated server, edit the server config file directly and run `/sleepmenu reload`.
 
 ---
 

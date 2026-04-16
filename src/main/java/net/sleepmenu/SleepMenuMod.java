@@ -170,8 +170,9 @@ public class SleepMenuMod implements ModInitializer {
     }
 
     private void initializeRateLimitState() {
+        recentActionTicksByType.clear();
         for (ActionType type : ActionType.values()) {
-            recentActionTicksByType.computeIfAbsent(type, ignored -> new ArrayDeque<>());
+            recentActionTicksByType.put(type, new ArrayDeque<>());
         }
     }
 
@@ -494,11 +495,12 @@ public class SleepMenuMod implements ModInitializer {
         }
 
         private boolean hasPermission(ServerPlayer player, String node) {
-            return me.lucko.fabric.api.permissions.v0.Permissions.check(
-                player,
-                node,
-                config.noLuckPermsAccessMode == NoLuckPermsAccessMode.EVERYONE
-            );
+            boolean fallbackAllowed = switch (config.noLuckPermsAccessMode) {
+                case EVERYONE -> true;
+                case OP_ONLY -> player.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER);
+            };
+
+            return me.lucko.fabric.api.permissions.v0.Permissions.check(player, node, fallbackAllowed);
         }
     }
 

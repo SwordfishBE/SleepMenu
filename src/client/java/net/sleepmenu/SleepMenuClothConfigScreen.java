@@ -3,6 +3,8 @@ package net.sleepmenu;
 import me.shedaniel.clothconfig2.api.ConfigBuilder;
 import me.shedaniel.clothconfig2.api.ConfigCategory;
 import me.shedaniel.clothconfig2.api.ConfigEntryBuilder;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.AlertScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
@@ -11,6 +13,14 @@ final class SleepMenuClothConfigScreen {
     }
 
     static Screen create(Screen parent) {
+        if (isConnectedToRemoteServer()) {
+            return new AlertScreen(
+                () -> Minecraft.getInstance().setScreen(parent),
+                Component.literal("Sleep Menu Config"),
+                Component.literal("Sleep Menu uses the server config. While connected to a remote server, Mod Menu cannot edit it. Edit the server config directly, then run /sleepmenu reload.")
+            );
+        }
+
         SleepMenuMod.SleepMenuConfig config = SleepMenuMod.loadConfigForEditing();
 
         ConfigBuilder builder = ConfigBuilder.create()
@@ -64,5 +74,10 @@ final class SleepMenuClothConfigScreen {
             .build());
 
         return builder.build();
+    }
+
+    private static boolean isConnectedToRemoteServer() {
+        Minecraft minecraft = Minecraft.getInstance();
+        return minecraft.getConnection() != null && !minecraft.hasSingleplayerServer();
     }
 }
