@@ -15,7 +15,7 @@ final class SleepMenuClothConfigScreen {
     static Screen create(Screen parent) {
         if (isConnectedToRemoteServer()) {
             return new AlertScreen(
-                () -> Minecraft.getInstance().setScreen(parent),
+                () -> Minecraft.getInstance().setScreenAndShow(parent),
                 Component.literal("Sleep Menu Config"),
                 Component.literal("Sleep Menu uses the server config. While connected to a remote server, Mod Menu cannot edit it. Edit the server config directly, then run /sleepmenu reload.")
             );
